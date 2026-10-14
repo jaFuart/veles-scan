@@ -1,0 +1,41 @@
+# ---- Secrets / local overrides ----
+.env
+checko_runtime_config.py
+
+# ---- Pipeline outputs ----
+artifacts/
+runtime/
+logs/
+*.log
+# Safety net: generated outputs if saved near scripts
+active_companies_for_gpt.xlsx
+company_info_gpt_raw.json
+company_info_gpt_dedup.json
+enriched.xlsx
+enriched_dedup_contacts.xlsx
+enriched_processed.xlsx
+final_pipeline_output.xlsx
+
+# ---- Python cache/build ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

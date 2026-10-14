@@ -1,0 +1,24 @@
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+checko_runtime_config.py
+
+# Runtime data
+.autoscaler.pid
+runtime/
+artifacts/
+logs/
+*.log
+
+# Dependencies, caches and editor files
+node_modules/
+.next/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+\connect veles_ui
+\i /sql-ui/001_init_schema.sql
+\i /sql-ui/003_analytics.sql
+\i /sql-ui/004_promocode_unlimited.sql
+\i /sql-ui/005_global_settings_and_project_price.sql
+\i /sql-ui/006_global_price_promo.sql
+\i /sql-ui/007_promo_timezone_and_timeless.sql
+\i /sql-ui/008_project_pricing_audit.sql
+\i /sql-ui/009_tbank_topups.sql

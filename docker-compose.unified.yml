@@ -1,0 +1,258 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-pipeline}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./veles-scan-back/docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-pipeline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipeline}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/000_create_databases.sql:/docker-entrypoint-initdb.d/000_create_databases.sql:ro
+      - ./infra/postgres/010_ui_schema.sql:/docker-entrypoint-initdb.d/010_ui_schema.sql:ro
+      - ./veles-scan-ui/sql:/sql-ui:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pipeline} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./veles-scan-back
+      dockerfile: docker/Dockerfile.api
+    env_file:
+      - ./.env
+    environment:
+      APP_ROLE: api
+      APP_PORT: 8080
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      BACKEND_LOG_DIR: /app/runtime/backend-logs
+      POSTGRES_DB: veles_pipeline
+      POSTGRES_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      MINIO_ENDPOINT: minio:9000
+      RABBITMQ_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-pipeline}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - pipeline_runtime:/app/runtime
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  pipeline_worker:
+    build:
+      context: ./veles-scan-back
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - ./.env
+    environment:
+      APP_ROLE: pipeline_worker
+      METRICS_PORT: 9101
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      BACKEND_LOG_DIR: /app/runtime/backend-logs
+      POSTGRES_DB: veles_pipeline
+      POSTGRES_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-pipeline}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      QUEUE_WORKER_HEARTBEAT: jobs.worker.heartbeat
+      PIPELINE_ARTIFACTS_ROOT: /app/runtime/jobs
+    volumes:
+      - pipeline_runtime:/app/runtime
+    ports:
+      - "127.0.0.1:9101:9101"
+    init: true
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  checko_worker:
+    build:
+      context: ./veles-scan-back
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - ./.env
+    environment:
+      APP_ROLE: checko_worker
+      METRICS_PORT: 9102
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      BACKEND_LOG_DIR: /app/runtime/backend-logs
+      POSTGRES_DB: veles_pipeline
+      POSTGRES_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-pipeline}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      QUEUE_WORKER_HEARTBEAT: jobs.worker.heartbeat
+      PIPELINE_ARTIFACTS_ROOT: /app/runtime/checko
+    volumes:
+      - pipeline_runtime:/app/runtime
+    ports:
+      - "127.0.0.1:9102:9102"
+    init: true
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  status_aggregator:
+    build:
+      context: ./veles-scan-back
+      dockerfile: docker/Dockerfile.worker
+    env_file:
+      - ./.env
+    environment:
+      APP_ROLE: status_aggregator
+      METRICS_PORT: 9103
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      BACKEND_LOG_DIR: /app/runtime/backend-logs
+      POSTGRES_DB: veles_pipeline
+      POSTGRES_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-pipeline}
+      QUEUE_WORKER_HEARTBEAT: jobs.worker.heartbeat
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pipeline_runtime:/app/runtime
+    ports:
+      - "127.0.0.1:9103:9103"
+    init: true
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: ./veles-scan-back
+      dockerfile: docker/Dockerfile.scheduler
+    env_file:
+      - ./.env
+    environment:
+      APP_ROLE: scheduler
+      METRICS_PORT: 9104
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      BACKEND_LOG_DIR: /app/runtime/backend-logs
+      POSTGRES_DB: veles_pipeline
+      POSTGRES_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-pipeline}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-pipeline}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - pipeline_runtime:/app/runtime
+    ports:
+      - "127.0.0.1:9104:9104"
+    init: true
+    restart: unless-stopped
+
+  scan_ui:
+    build:
+      context: ./veles-scan-ui
+      dockerfile: Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: veles_ui
+      POSTGRES_USER: ${POSTGRES_USER:-pipeline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipeline}
+      BACKEND_API_URL: http://api:8080
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:3000}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      TBANK_TERMINAL_KEY: ${TBANK_TERMINAL_KEY:-}
+      TBANK_PASSWORD: ${TBANK_PASSWORD:-}
+      TBANK_NOTIFICATION_URL: ${TBANK_NOTIFICATION_URL:-}
+      NODE_ENV: production
+    ports:
+      - "${PUBLIC_UI_BIND_IP:-0.0.0.0}:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  postgres_data:
+  minio_data:
+  pipeline_runtime:
